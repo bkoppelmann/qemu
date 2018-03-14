@@ -238,137 +238,174 @@ static void gen_store2(DisasContext *ctx, TCGMemOp memop, int rs1, int rs2,
     tcg_temp_free(dat);
 }
 
-static bool trans_LUI(DisasContext *ctx, arg_LUI *a, uint32_t insn)
+static void gen_mulhsu(TCGv ret, TCGv arg1, TCGv arg2)
 {
-    if (a->rd != 0) {
-        tcg_gen_movi_tl(cpu_gpr[a->rd], a->imm);
-    }
-    return true;
+    TCGv rl = tcg_temp_new();
+    TCGv rh = tcg_temp_new();
+
+    tcg_gen_mulu2_tl(rl, rh, arg1, arg2);
+    /* fix up for one negative */
+    tcg_gen_sari_tl(rl, arg1, TARGET_LONG_BITS - 1);
+    tcg_gen_and_tl(rl, rl, arg2);
+    tcg_gen_sub_tl(ret, rh, rl);
+
+    tcg_temp_free(rl);
+    tcg_temp_free(rh);
 }
 
-static bool trans_AUIPC(DisasContext *ctx, arg_AUIPC *a, uint32_t insn)
+static void gen_div(TCGv ret, TCGv arg1, TCGv arg2)
 {
-    if (a->rd != 0) {
-        tcg_gen_movi_tl(cpu_gpr[a->rd], a->imm);
-    }
-    return true;
+    /* Handle by altering args to tcg_gen_div to produce req'd results:
+     * For overflow: want arg1 in arg1 and 1 in arg2
+     * For div by zero: want -1 in arg1 and 1 in arg2 -> -1 result */
+    TCGv cond1 = tcg_temp_new();
+    TCGv cond2 = tcg_temp_new();
+    TCGv zeroreg = tcg_const_tl(0);
+    TCGv resultopt1 = tcg_temp_new();
+
+    tcg_gen_movi_tl(resultopt1, (target_ulong)-1);
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cond2, arg2, (target_ulong)(~0L));
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cond1, arg1,
+                        ((target_ulong)1) << (TARGET_LONG_BITS - 1));
+    tcg_gen_and_tl(cond1, cond1, cond2); /* cond1 = overflow */
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cond2, arg2, 0); /* cond2 = div 0 */
+    /* if div by zero, set arg1 to -1, otherwise don't change */
+    tcg_gen_movcond_tl(TCG_COND_EQ, arg1, cond2, zeroreg, arg1,
+            resultopt1);
+    /* if overflow or div by zero, set arg2 to 1, else don't change */
+    tcg_gen_or_tl(cond1, cond1, cond2);
+    tcg_gen_movi_tl(resultopt1, (target_ulong)1);
+    tcg_gen_movcond_tl(TCG_COND_EQ, arg2, cond1, zeroreg, arg2,
+            resultopt1);
+    tcg_gen_div_tl(ret, arg1, arg2);
+
+    tcg_temp_free(cond1);
+    tcg_temp_free(cond2);
+    tcg_temp_free(zeroreg);
+    tcg_temp_free(resultopt1);
 }
 
-static bool trans_JAL(DisasContext *ctx, arg_JAL *a, uint32_t insn)
+static void gen_divu(TCGv ret, TCGv arg1, TCGv arg2)
 {
-    target_ulong next_pc;
-    /* check misaligned: */
-    next_pc = ctx->pc + a->imm;
-    /* FIXME: If we reuse this for RVC, don't check for misaligned */
-    if ((next_pc & 0x3) != 0) {
-        gen_exception_inst_addr_mis(ctx);
-        return true;
-    }
-    if (a->rd != 0) {
-        tcg_gen_movi_tl(cpu_gpr[a->rd], ctx->next_pc);
-    }
-    gen_goto_tb(ctx, 0, ctx->pc + a->imm); /* must use this for safety */
-    ctx->bstate = BS_BRANCH;
-    return true;
-}
-static bool trans_JALR(DisasContext *ctx, arg_JALR *a, uint32_t insn)
-{
-    /* no chaining with JALR */
-    TCGLabel *misaligned = NULL;
-    TCGv t0 = tcg_temp_new();
+    TCGv cond1 = tcg_temp_new();
+    TCGv zeroreg = tcg_const_tl(0);
+    TCGv resultopt1 = tcg_temp_new();
 
-    gen_get_gpr(cpu_pc, a->rs1);
-    tcg_gen_addi_tl(cpu_pc, cpu_pc, a->imm);
-    tcg_gen_andi_tl(cpu_pc, cpu_pc, (target_ulong)-2);
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cond1, arg2, 0);
+    tcg_gen_movi_tl(resultopt1, (target_ulong)-1);
+    tcg_gen_movcond_tl(TCG_COND_EQ, arg1, cond1, zeroreg, arg1,
+            resultopt1);
+    tcg_gen_movi_tl(resultopt1, (target_ulong)1);
+    tcg_gen_movcond_tl(TCG_COND_EQ, arg2, cond1, zeroreg, arg2,
+            resultopt1);
+    tcg_gen_divu_tl(arg1, arg1, arg2);
 
-    /* FIXME: If we reuse this for RVC, don't check for misaligned */
-    misaligned = gen_new_label();
-    tcg_gen_andi_tl(t0, cpu_pc, 0x2);
-    tcg_gen_brcondi_tl(TCG_COND_NE, t0, 0x0, misaligned);
+    tcg_temp_free(cond1);
+    tcg_temp_free(zeroreg);
+    tcg_temp_free(resultopt1);
+}
 
-    if (a->rd != 0) {
-        tcg_gen_movi_tl(cpu_gpr[a->rd], ctx->next_pc);
+static void gen_rem(TCGv ret, TCGv arg1, TCGv arg2)
+{
+    TCGv cond1 = tcg_temp_new();
+    TCGv cond2 = tcg_temp_new();
+    TCGv zeroreg = tcg_const_tl(0);
+    TCGv resultopt1 = tcg_temp_new();
+
+    tcg_gen_movi_tl(resultopt1, 1L);
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cond2, arg2, (target_ulong)-1);
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cond1, arg1,
+                        (target_ulong)1 << (TARGET_LONG_BITS - 1));
+    tcg_gen_and_tl(cond2, cond1, cond2); /* cond1 = overflow */
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cond1, arg2, 0); /* cond2 = div 0 */
+    /* if overflow or div by zero, set arg2 to 1, else don't change */
+    tcg_gen_or_tl(cond2, cond1, cond2);
+    tcg_gen_movcond_tl(TCG_COND_EQ, arg2, cond2, zeroreg, arg2,
+            resultopt1);
+    tcg_gen_rem_tl(resultopt1, arg1, arg2);
+    /* if div by zero, just return the original dividend */
+    tcg_gen_movcond_tl(TCG_COND_EQ, arg1, cond1, zeroreg, resultopt1,
+            arg1);
+
+    tcg_temp_free(cond1);
+    tcg_temp_free(cond2);
+    tcg_temp_free(zeroreg);
+    tcg_temp_free(resultopt1);
+}
+
+static void gen_remu(TCGv ret, TCGv arg1, TCGv arg2)
+{
+    TCGv cond1 = tcg_temp_new();
+    TCGv zeroreg = tcg_const_tl(0);
+    TCGv resultopt1 = tcg_temp_new();
+
+    tcg_gen_movi_tl(resultopt1, (target_ulong)1);
+    tcg_gen_setcondi_tl(TCG_COND_EQ, cond1, arg2, 0);
+    tcg_gen_movcond_tl(TCG_COND_EQ, arg2, cond1, zeroreg, arg2,
+            resultopt1);
+    tcg_gen_remu_tl(resultopt1, arg1, arg2);
+    /* if div by zero, just return the original dividend */
+    tcg_gen_movcond_tl(TCG_COND_EQ, arg1, cond1, zeroreg, resultopt1,
+            arg1);
+
+    tcg_temp_free(cond1);
+    tcg_temp_free(zeroreg);
+    tcg_temp_free(resultopt1);
+}
+
+static void gen_amo_minmax(DisasContext *ctx, TCGCond cond, uint32_t rd,
+                           uint32_t rs1, uint32_t rs2, uint8_t rl, uint8_t aq,
+                           TCGMemOp mop)
+{
+    TCGv dat;
+    TCGLabel *l1;
+    TCGv src1 = tcg_temp_new();
+    TCGv src2 = tcg_temp_new();
+
+    /* Handle the RL barrier.  The AQ barrier is handled along the
+       parallel path by the SC atomic cmpxchg.  On the serial path,
+       of course, barriers do not matter.  */
+    if (rl) {
+        tcg_gen_mb(TCG_MO_ALL | TCG_BAR_STRL);
     }
-    tcg_gen_exit_tb(0);
-
-    if (misaligned) {
-        gen_set_label(misaligned);
-        gen_exception_inst_addr_mis(ctx);
+    if (tb_cflags(ctx->tb) & CF_PARALLEL) {
+        l1 = gen_new_label();
+        gen_set_label(l1);
+    } else {
+        l1 = NULL;
     }
-    ctx->bstate = BS_BRANCH;
-    tcg_temp_free(t0);
-    return true;
+
+    gen_get_gpr(src1, rs1);
+    gen_get_gpr(src2, rs2);
+    if ((mop & MO_SSIZE) == MO_SL) {
+        /* Sign-extend the register comparison input.  */
+        tcg_gen_ext32s_tl(src2, src2);
+    }
+    dat = tcg_temp_local_new();
+    tcg_gen_qemu_ld_tl(dat, src1, ctx->mem_idx, mop);
+    tcg_gen_movcond_tl(cond, src2, dat, src2, dat, src2);
+
+    if (tb_cflags(ctx->tb) & CF_PARALLEL) {
+        /* Parallel context.  Make this operation atomic by verifying
+           that the memory didn't change while we computed the result.  */
+        tcg_gen_atomic_cmpxchg_tl(src2, src1, dat, src2, ctx->mem_idx, mop);
+
+        /* If the cmpxchg failed, retry. */
+        /* ??? There is an assumption here that this will eventually
+           succeed, such that we don't live-lock.  This is not unlike
+           a similar loop that the compiler would generate for e.g.
+           __atomic_fetch_and_xor, so don't worry about it.  */
+        tcg_gen_brcond_tl(TCG_COND_NE, dat, src2, l1);
+    } else {
+        /* Serial context.  Directly store the result.  */
+        tcg_gen_qemu_st_tl(src2, src1, ctx->mem_idx, mop);
+    }
+    gen_set_gpr(rd, dat);
+    tcg_temp_free(src1);
+    tcg_temp_free(src2);
+    tcg_temp_free(dat);
 }
-static bool trans_BEQ(DisasContext *ctx, arg_BEQ *a, uint32_t insn)
-{
-    gen_branch_cond(ctx, TCG_COND_EQ, a->rs1, a->rs2, a->imm);
-    return true;
-}
-static bool trans_BNE(DisasContext *ctx, arg_BNE *a, uint32_t insn)
-{
-    gen_branch_cond(ctx, TCG_COND_NE, a->rs1, a->rs2, a->imm);
-    return true;
-}
-static bool trans_BLT(DisasContext *ctx, arg_BLT *a, uint32_t insn)
-{
-    gen_branch_cond(ctx, TCG_COND_LT, a->rs1, a->rs2, a->imm);
-    return true;
-}
-static bool trans_BGE(DisasContext *ctx, arg_BGE *a, uint32_t insn)
-{
-    gen_branch_cond(ctx, TCG_COND_GE, a->rs1, a->rs2, a->imm);
-    return true;
-}
-static bool trans_BLTU(DisasContext *ctx, arg_BLTU *a, uint32_t insn)
-{
-    gen_branch_cond(ctx, TCG_COND_LTU, a->rs1, a->rs2, a->imm);
-    return true;
-}
-static bool trans_BGEU(DisasContext *ctx, arg_BGEU *a, uint32_t insn)
-{
-    gen_branch_cond(ctx, TCG_COND_GEU, a->rs1, a->rs2, a->imm);
-    return true;
-}
-static bool trans_LB(DisasContext *ctx, arg_LB *a, uint32_t insn)
-{
-    gen_load2(ctx, MO_SB, a->rd, a->rs1, a->imm);
-    return true;
-}
-static bool trans_LH(DisasContext *ctx, arg_LH *a, uint32_t insn)
-{
-    gen_load2(ctx, MO_LESW, a->rd, a->rs1, a->imm);
-    return true;
-}
-static bool trans_LW(DisasContext *ctx, arg_LW *a, uint32_t insn)
-{
-    gen_load2(ctx, MO_LESL, a->rd, a->rs1, a->imm);
-    return true;
-}
-static bool trans_LBU(DisasContext *ctx, arg_LBU *a, uint32_t insn)
-{
-    gen_load2(ctx, MO_UB, a->rd, a->rs1, a->imm);
-    return true;
-}
-static bool trans_LHU(DisasContext *ctx, arg_LHU *a, uint32_t insn)
-{
-    gen_load2(ctx, MO_LEUW, a->rd, a->rs1, a->imm);
-    return true;
-}
-static bool trans_SB(DisasContext *ctx, arg_SB *a, uint32_t insn)
-{
-    gen_store2(ctx, MO_UB, a->rs1, a->rs2, a->imm);
-    return true;
-}
-static bool trans_SH(DisasContext *ctx, arg_SH *a, uint32_t insn)
-{
-    gen_store2(ctx, MO_LEUW, a->rs1, a->rs2, a->imm);
-    return true;
-}
-static bool trans_SW(DisasContext *ctx, arg_SW *a, uint32_t insn)
-{
-    gen_store2(ctx, MO_LEUL, a->rs1, a->rs2, a->imm);
-    return true;
-}
+
 #define LOAD_ARGS \
     TCGv source1, source2; \
     source1 = tcg_temp_new(); \
@@ -390,525 +427,16 @@ static bool trans_SW(DisasContext *ctx, arg_SW *a, uint32_t insn)
     gen_set_gpr(a->rd, source1); \
     tcg_temp_free(source1);\
 
-static bool trans_ADDI(DisasContext *ctx, arg_ADDI *a, uint32_t insn)
-{
-    LOAD_ARGSI
-    tcg_gen_addi_tl(source1, source1, a->imm);
-    RESULT_AND_FREEI
-    return true;
-}
-static bool trans_SLTI(DisasContext *ctx, arg_SLTI *a, uint32_t insn)
-{
-    LOAD_ARGSI
-    tcg_gen_setcondi_tl(TCG_COND_LT, source1, source1, a->imm);
-    RESULT_AND_FREEI
-    return true;
-}
-static bool trans_SLTIU(DisasContext *ctx, arg_SLTIU *a, uint32_t insn)
-{
-    LOAD_ARGSI
-    tcg_gen_setcondi_tl(TCG_COND_LTU, source1, source1, a->imm);
-    RESULT_AND_FREEI
-    return true;
-}
-static bool trans_XORI(DisasContext *ctx, arg_XORI *a, uint32_t insn)
-{
-    LOAD_ARGSI
-    tcg_gen_xori_tl(source1, source1, a->imm);
-    RESULT_AND_FREEI
-    return true;
-}
-static bool trans_ORI(DisasContext *ctx, arg_ORI *a, uint32_t insn)
-{
-    LOAD_ARGSI
-    tcg_gen_ori_tl(source1, source1, a->imm);
-    RESULT_AND_FREEI
-    return true;
-}
-static bool trans_ANDI(DisasContext *ctx, arg_ANDI *a, uint32_t insn)
-{
-    LOAD_ARGSI
-    tcg_gen_andi_tl(source1, source1, a->imm);
-    RESULT_AND_FREEI
-    return true;
-}
-static bool trans_SLLI(DisasContext *ctx, arg_SLLI *a, uint32_t insn)
-{
-    LOAD_ARGSI
-    if (a->shamt > TARGET_LONG_BITS) {
-        gen_exception_illegal(ctx);
-        return false;
-    }
-    tcg_gen_shli_tl(source1, source1, a->shamt);
-    RESULT_AND_FREEI
-    return true;
-}
-static bool trans_SRLI(DisasContext *ctx, arg_SRLI *a, uint32_t insn)
-{
-    LOAD_ARGSI
-    if (a->shamt > TARGET_LONG_BITS) {
-        gen_exception_illegal(ctx);
-        return false;
-    }
-    tcg_gen_shri_tl(source1, source1, a->shamt);
-    RESULT_AND_FREEI
-    return true;
-}
-static bool trans_SRAI(DisasContext *ctx, arg_SRAI *a, uint32_t insn)
-{
-    LOAD_ARGSI
-    if (a->shamt > TARGET_LONG_BITS) {
-        gen_exception_illegal(ctx);
-        return false;
-    }
-    tcg_gen_sari_tl(source1, source1, a->shamt);
-    RESULT_AND_FREEI
-    return true;
-}
-static bool trans_ADD(DisasContext *ctx, arg_ADD *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_add_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_SUB(DisasContext *ctx, arg_SUB *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_sub_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_SLL(DisasContext *ctx, arg_SLL *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_andi_tl(source2, source2, TARGET_LONG_BITS - 1);
-    tcg_gen_shl_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_SLT(DisasContext *ctx, arg_SLT *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_setcond_tl(TCG_COND_LT, source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_SLTU(DisasContext *ctx, arg_SLTU *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_setcond_tl(TCG_COND_LTU, source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_XOR(DisasContext *ctx, arg_XOR *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_xor_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_SRL(DisasContext *ctx, arg_SRL *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_andi_tl(source2, source2, TARGET_LONG_BITS - 1);
-    tcg_gen_shr_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_SRA(DisasContext *ctx, arg_SRA *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_andi_tl(source2, source2, TARGET_LONG_BITS - 1);
-    tcg_gen_sar_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_OR(DisasContext *ctx, arg_OR *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_or_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_AND(DisasContext *ctx, arg_AND *a, uint32_t insn)
-{
-    LOAD_ARGS
-    tcg_gen_and_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-}
-static bool trans_FENCE(DisasContext *ctx, arg_FENCE *a, uint32_t insn)
-{
-    tcg_gen_mb(TCG_MO_ALL | TCG_BAR_SC);
-    return true;
-}
-static bool trans_FENCEI(DisasContext *ctx, arg_FENCEI *a, uint32_t insn)
-{
-    /* FENCE_I is a no-op in QEMU,
-     * however we need to end the translation block */
-    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
-    tcg_gen_exit_tb(0);
-    return false;
-}
-static bool trans_ECALL(DisasContext *ctx, arg_ECALL *a, uint32_t insn)
-{
-    /* always generates U-level ECALL, fixed in do_interrupt handler */
-    tcg_gen_movi_tl(cpu_pc, ctx->pc);
-    generate_exception(ctx, RISCV_EXCP_U_ECALL);
-    tcg_gen_exit_tb(0); /* no chaining */
-    ctx->bstate = BS_BRANCH;
-    return false;
-}
-static bool trans_EBREAK(DisasContext *ctx, arg_EBREAK *a, uint32_t insn)
-{
-    tcg_gen_movi_tl(cpu_pc, ctx->pc);
-    generate_exception(ctx, RISCV_EXCP_BREAKPOINT);
-    tcg_gen_exit_tb(0); /* no chaining */
-    ctx->bstate = BS_BRANCH;
-    return false;
-}
-
-static bool trans_CSRRW(DisasContext *ctx, arg_CSRRW *a, uint32_t insn)
-{
-    TCGv source1, csr_store, dest;
-    source1 = tcg_temp_new();
-    csr_store = tcg_temp_new();
-    dest = tcg_temp_new();
-
-    tcg_gen_movi_tl(cpu_pc, ctx->pc);
-    gen_get_gpr(source1, a->rs1);
-    tcg_gen_movi_tl(csr_store, a->csr);
-    gen_helper_csrrw(dest, cpu_env, source1, csr_store);
-    gen_set_gpr(a->rd, dest);
-
-    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
-    tcg_gen_exit_tb(0); /* no chaining */
-    ctx->bstate = BS_BRANCH;
-
-    tcg_temp_free(source1);
-    tcg_temp_free(csr_store);
-    tcg_temp_free(dest);
-
-    return false;
-}
-static bool trans_CSRRS(DisasContext *ctx, arg_CSRRS *a, uint32_t insn)
-{
-    TCGv source1, csr_store, dest, rs1_pass;
-    source1 = tcg_temp_new();
-    csr_store = tcg_temp_new();
-    dest = tcg_temp_new();
-    rs1_pass = tcg_temp_new();
-
-    tcg_gen_movi_tl(cpu_pc, ctx->pc);
-    gen_get_gpr(source1, a->rs1);
-    tcg_gen_movi_tl(csr_store, a->csr);
-    tcg_gen_movi_tl(rs1_pass, a->rs1);
-    gen_helper_csrrs(dest, cpu_env, source1, csr_store, rs1_pass);
-    gen_set_gpr(a->rd, dest);
-
-    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
-    tcg_gen_exit_tb(0); /* no chaining */
-    ctx->bstate = BS_BRANCH;
-
-    tcg_temp_free(source1);
-    tcg_temp_free(csr_store);
-    tcg_temp_free(rs1_pass);
-    tcg_temp_free(dest);
-
-    return false;
-}
-static bool trans_CSRRC(DisasContext *ctx, arg_CSRRC *a, uint32_t insn)
-{
-    TCGv source1, csr_store, dest, rs1_pass;
-    source1 = tcg_temp_new();
-    csr_store = tcg_temp_new();
-    dest = tcg_temp_new();
-    rs1_pass = tcg_temp_new();
-
-    tcg_gen_movi_tl(cpu_pc, ctx->pc);
-    gen_get_gpr(source1, a->rs1);
-    tcg_gen_movi_tl(csr_store, a->csr);
-    tcg_gen_movi_tl(rs1_pass, a->rs1);
-    gen_helper_csrrc(dest, cpu_env, source1, csr_store, rs1_pass);
-    gen_set_gpr(a->rd, dest);
-
-    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
-    tcg_gen_exit_tb(0); /* no chaining */
-    ctx->bstate = BS_BRANCH;
-
-    tcg_temp_free(source1);
-    tcg_temp_free(csr_store);
-    tcg_temp_free(rs1_pass);
-    tcg_temp_free(dest);
-
-    return false;
-}
-static bool trans_CSRRWI(DisasContext *ctx, arg_CSRRWI *a, uint32_t insn)
-{
-    TCGv csr_store, dest, imm_rs1;
-    csr_store = tcg_temp_new();
-    imm_rs1 = tcg_temp_new();
-    dest = tcg_temp_new();
-
-    tcg_gen_movi_tl(cpu_pc, ctx->pc);
-    tcg_gen_movi_tl(imm_rs1, a->rs1);
-    tcg_gen_movi_tl(csr_store, a->csr);
-    gen_helper_csrrw(dest, cpu_env, imm_rs1, csr_store);
-    gen_set_gpr(a->rd, dest);
-
-    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
-    tcg_gen_exit_tb(0); /* no chaining */
-    ctx->bstate = BS_BRANCH;
-
-    tcg_temp_free(csr_store);
-    tcg_temp_free(imm_rs1);
-    tcg_temp_free(dest);
-    return false;
-}
-static bool trans_CSRRSI(DisasContext *ctx, arg_CSRRSI *a, uint32_t insn)
-{
-    TCGv csr_store, dest, imm_rs1;
-    csr_store = tcg_temp_new();
-    imm_rs1 = tcg_temp_new();
-    dest = tcg_temp_new();
-
-    tcg_gen_movi_tl(cpu_pc, ctx->pc);
-    tcg_gen_movi_tl(imm_rs1, a->rs1);
-    tcg_gen_movi_tl(csr_store, a->csr);
-    gen_helper_csrrs(dest, cpu_env, imm_rs1, csr_store, imm_rs1);
-    gen_set_gpr(a->rd, dest);
-
-    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
-    tcg_gen_exit_tb(0); /* no chaining */
-    ctx->bstate = BS_BRANCH;
-
-    tcg_temp_free(csr_store);
-    tcg_temp_free(imm_rs1);
-    tcg_temp_free(dest);
-    return false;
-}
-static bool trans_CSRRCI(DisasContext *ctx, arg_CSRRCI *a, uint32_t insn)
-{
-    TCGv csr_store, dest, imm_rs1;
-    csr_store = tcg_temp_new();
-    imm_rs1 = tcg_temp_new();
-    dest = tcg_temp_new();
-
-    tcg_gen_movi_tl(cpu_pc, ctx->pc);
-    tcg_gen_movi_tl(imm_rs1, a->rs1);
-    tcg_gen_movi_tl(csr_store, a->csr);
-    gen_helper_csrrc(dest, cpu_env, imm_rs1, csr_store, imm_rs1);
-    gen_set_gpr(a->rd, dest);
-
-    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
-    tcg_gen_exit_tb(0); /* no chaining */
-    ctx->bstate = BS_BRANCH;
-
-    tcg_temp_free(csr_store);
-    tcg_temp_free(imm_rs1);
-    tcg_temp_free(dest);
-    return false;
-}
-
+// RV32I
+#include "trans_insns/rv32I.inc.c"
 // RV64I
-static bool trans_LWU(DisasContext *ctx, arg_LWU *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    gen_load2(ctx, MO_LEUL, a->rd, a->rs1, a->imm);
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-
-}
-
-static bool trans_LD(DisasContext *ctx, arg_LD *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    gen_load2(ctx, MO_LEQ, a->rd, a->rs1, a->imm);
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-
-}
-
-static bool trans_SD(DisasContext *ctx, arg_SD *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    gen_store2(ctx, MO_LEQ, a->rs1, a->rs2, a->imm);
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-
-}
-
-static bool trans_ADDIW(DisasContext *ctx, arg_ADDIW *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    LOAD_ARGSI
-    tcg_gen_addi_tl(source1, source1, a->imm);
-    RESULT_AND_FREEI
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-
-}
-
-static bool trans_SLLIW(DisasContext *ctx, arg_SLLIW *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    LOAD_ARGSI
-    if (a->shamt > 32) {
-        gen_exception_illegal(ctx);
-        return false;
-    }
-    tcg_gen_shli_tl(source1, source1, a->shamt);
-    RESULT_AND_FREEI
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-
-}
-
-static bool trans_SRLIW(DisasContext *ctx, arg_SRLIW *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    LOAD_ARGSI
-    if (a->shamt > 32) {
-        gen_exception_illegal(ctx);
-        return false;
-    }
-    tcg_gen_shri_tl(source1, source1, a->shamt);
-    RESULT_AND_FREEI
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-
-}
-
-static bool trans_SRAIW(DisasContext *ctx, arg_SRAIW *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    LOAD_ARGSI
-    if (a->shamt > 32) {
-        gen_exception_illegal(ctx);
-        return false;
-    }
-    tcg_gen_sari_tl(source1, source1, a->shamt);
-    RESULT_AND_FREEI
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-
-}
-static bool trans_ADDW(DisasContext *ctx, arg_ADDW *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    LOAD_ARGS
-    tcg_gen_add_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-
-}
-
-static bool trans_SUBW(DisasContext *ctx, arg_SUBW *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    LOAD_ARGS
-    tcg_gen_sub_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-
-}
-
-static bool trans_SLLW(DisasContext *ctx, arg_SLLW *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    LOAD_ARGS
-    tcg_gen_andi_tl(source2, source2, 0x1F);
-    tcg_gen_shl_tl(source1, source1, source2);
-    tcg_gen_andi_tl(source2, source2, TARGET_LONG_BITS - 1);
-    tcg_gen_shl_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-}
-
-static bool trans_SRLW(DisasContext *ctx, arg_SRLW *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    LOAD_ARGS
-    tcg_gen_ext32u_tl(source1, source1);
-    tcg_gen_andi_tl(source2, source2, 0x1F);
-    tcg_gen_shr_tl(source1, source1, source2);
-    tcg_gen_andi_tl(source2, source2, TARGET_LONG_BITS - 1);
-    tcg_gen_shr_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-}
-
-static bool trans_SRAW(DisasContext *ctx, arg_SRAW *a, uint32_t insn)
-{
-#if defined(TARGET_RISCV64)
-    LOAD_ARGS
-    /* first, trick to get it to act like working on 32 bits (get rid of
-    upper 32, sign extend to fill space) */
-    tcg_gen_ext32s_tl(source1, source1);
-    tcg_gen_andi_tl(source2, source2, 0x1F);
-    tcg_gen_sar_tl(source1, source1, source2);
-    tcg_gen_andi_tl(source2, source2, TARGET_LONG_BITS - 1);
-    tcg_gen_sar_tl(source1, source1, source2);
-    RESULT_AND_FREE
-    return true;
-#else
-    gen_exception_illegal(ctx);
-    return false;
-#endif
-}
-
-static void gen_mulhsu(TCGv ret, TCGv arg1, TCGv arg2)
-{
-    TCGv rl = tcg_temp_new();
-    TCGv rh = tcg_temp_new();
-
-    tcg_gen_mulu2_tl(rl, rh, arg1, arg2);
-    /* fix up for one negative */
-    tcg_gen_sari_tl(rl, arg1, TARGET_LONG_BITS - 1);
-    tcg_gen_and_tl(rl, rl, arg2);
-    tcg_gen_sub_tl(ret, rh, rl);
-
-    tcg_temp_free(rl);
-    tcg_temp_free(rh);
-}
+#include "trans_insns/rv64I.inc.c"
+//RV32M
+#include "trans_insns/rv32M.inc.c"
+//RV64M
+#include "trans_insns/rv64M.inc.c"
+//RV32A
+#include "trans_insns/rv32A.inc.c"
 
 
 static void gen_arith(DisasContext *ctx, uint32_t opc, int rd, int rs1,
