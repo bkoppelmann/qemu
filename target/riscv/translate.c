@@ -554,6 +554,7 @@ static bool trans_FENCEI(DisasContext *ctx, arg_FENCEI *a, uint32_t insn)
 static bool trans_ECALL(DisasContext *ctx, arg_ECALL *a, uint32_t insn)
 {
     /* always generates U-level ECALL, fixed in do_interrupt handler */
+    tcg_gen_movi_tl(cpu_pc, ctx->pc);
     generate_exception(ctx, RISCV_EXCP_U_ECALL);
     tcg_gen_exit_tb(0); /* no chaining */
     ctx->bstate = BS_BRANCH;
@@ -561,6 +562,7 @@ static bool trans_ECALL(DisasContext *ctx, arg_ECALL *a, uint32_t insn)
 }
 static bool trans_EBREAK(DisasContext *ctx, arg_EBREAK *a, uint32_t insn)
 {
+    tcg_gen_movi_tl(cpu_pc, ctx->pc);
     generate_exception(ctx, RISCV_EXCP_BREAKPOINT);
     tcg_gen_exit_tb(0); /* no chaining */
     ctx->bstate = BS_BRANCH;
@@ -574,6 +576,7 @@ static bool trans_CSRRW(DisasContext *ctx, arg_CSRRW *a, uint32_t insn)
     csr_store = tcg_temp_new();
     dest = tcg_temp_new();
 
+    tcg_gen_movi_tl(cpu_pc, ctx->pc);
     gen_get_gpr(source1, a->rs1);
     tcg_gen_movi_tl(csr_store, a->csr);
     gen_helper_csrrw(dest, cpu_env, source1, csr_store);
@@ -597,6 +600,7 @@ static bool trans_CSRRS(DisasContext *ctx, arg_CSRRS *a, uint32_t insn)
     dest = tcg_temp_new();
     rs1_pass = tcg_temp_new();
 
+    tcg_gen_movi_tl(cpu_pc, ctx->pc);
     gen_get_gpr(source1, a->rs1);
     tcg_gen_movi_tl(csr_store, a->csr);
     tcg_gen_movi_tl(rs1_pass, a->rs1);
@@ -622,6 +626,7 @@ static bool trans_CSRRC(DisasContext *ctx, arg_CSRRC *a, uint32_t insn)
     dest = tcg_temp_new();
     rs1_pass = tcg_temp_new();
 
+    tcg_gen_movi_tl(cpu_pc, ctx->pc);
     gen_get_gpr(source1, a->rs1);
     tcg_gen_movi_tl(csr_store, a->csr);
     tcg_gen_movi_tl(rs1_pass, a->rs1);
@@ -641,17 +646,68 @@ static bool trans_CSRRC(DisasContext *ctx, arg_CSRRC *a, uint32_t insn)
 }
 static bool trans_CSRRWI(DisasContext *ctx, arg_CSRRWI *a, uint32_t insn)
 {
-    printf("Dummy");
+    TCGv csr_store, dest, imm_rs1;
+    csr_store = tcg_temp_new();
+    imm_rs1 = tcg_temp_new();
+    dest = tcg_temp_new();
+
+    tcg_gen_movi_tl(cpu_pc, ctx->pc);
+    tcg_gen_movi_tl(imm_rs1, a->rs1);
+    tcg_gen_movi_tl(csr_store, a->csr);
+    gen_helper_csrrw(dest, cpu_env, imm_rs1, csr_store);
+    gen_set_gpr(a->rd, dest);
+
+    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
+    tcg_gen_exit_tb(0); /* no chaining */
+    ctx->bstate = BS_BRANCH;
+
+    tcg_temp_free(csr_store);
+    tcg_temp_free(imm_rs1);
+    tcg_temp_free(dest);
     return false;
 }
 static bool trans_CSRRSI(DisasContext *ctx, arg_CSRRSI *a, uint32_t insn)
 {
-    printf("Dummy");
+    TCGv csr_store, dest, imm_rs1;
+    csr_store = tcg_temp_new();
+    imm_rs1 = tcg_temp_new();
+    dest = tcg_temp_new();
+
+    tcg_gen_movi_tl(cpu_pc, ctx->pc);
+    tcg_gen_movi_tl(imm_rs1, a->rs1);
+    tcg_gen_movi_tl(csr_store, a->csr);
+    gen_helper_csrrs(dest, cpu_env, imm_rs1, csr_store, imm_rs1);
+    gen_set_gpr(a->rd, dest);
+
+    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
+    tcg_gen_exit_tb(0); /* no chaining */
+    ctx->bstate = BS_BRANCH;
+
+    tcg_temp_free(csr_store);
+    tcg_temp_free(imm_rs1);
+    tcg_temp_free(dest);
     return false;
 }
 static bool trans_CSRRCI(DisasContext *ctx, arg_CSRRCI *a, uint32_t insn)
 {
-    printf("Dummy");
+    TCGv csr_store, dest, imm_rs1;
+    csr_store = tcg_temp_new();
+    imm_rs1 = tcg_temp_new();
+    dest = tcg_temp_new();
+
+    tcg_gen_movi_tl(cpu_pc, ctx->pc);
+    tcg_gen_movi_tl(imm_rs1, a->rs1);
+    tcg_gen_movi_tl(csr_store, a->csr);
+    gen_helper_csrrc(dest, cpu_env, imm_rs1, csr_store, imm_rs1);
+    gen_set_gpr(a->rd, dest);
+
+    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
+    tcg_gen_exit_tb(0); /* no chaining */
+    ctx->bstate = BS_BRANCH;
+
+    tcg_temp_free(csr_store);
+    tcg_temp_free(imm_rs1);
+    tcg_temp_free(dest);
     return false;
 }
 
