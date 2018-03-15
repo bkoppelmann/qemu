@@ -406,6 +406,60 @@ static void gen_amo_minmax(DisasContext *ctx, TCGCond cond, uint32_t rd,
     tcg_temp_free(dat);
 }
 
+static void gen_lrwd(DisasContext *ctx, uint32_t rd, uint32_t rs1,
+                     uint8_t rl, uint8_t aq, TCGMemOp mop)
+{
+    TCGv src1 = tcg_temp_new();
+
+    gen_get_gpr(src1, rs1);
+    if (rl) {
+        tcg_gen_mb(TCG_MO_ALL | TCG_BAR_STRL);
+    }
+    tcg_gen_qemu_ld_tl(load_val, src1, ctx->mem_idx, mop);
+    if (aq) {
+        tcg_gen_mb(TCG_MO_ALL | TCG_BAR_LDAQ);
+    }
+    tcg_gen_mov_tl(load_res, src1);
+    gen_set_gpr(rd, load_val);
+
+    tcg_temp_free(src1);
+}
+static void gen_scwd(DisasContext *ctx, uint32_t rd, uint32_t rs1, uint32_t rs2,
+                     uint8_t rl, uint8_t aq, TCGMemOp mop)
+{
+    TCGLabel *l1, *l2;
+    TCGv src1 = tcg_temp_new();
+    TCGv src2 = tcg_temp_new();
+    TCGv dat  = tcg_temp_new();
+
+    l1 = gen_new_label();
+    l2 = gen_new_label();
+    gen_get_gpr(src1, rs1);
+    tcg_gen_brcond_tl(TCG_COND_NE, load_res, src1, l1);
+
+    gen_get_gpr(src2, rs2);
+    /* Note that the TCG atomic primitives are SC,
+       so we can ignore AQ/RL along this path.  */
+    tcg_gen_atomic_cmpxchg_tl(src1, load_res, load_val, src2,
+                              ctx->mem_idx, mop);
+    tcg_gen_setcond_tl(TCG_COND_NE, dat, src1, load_val);
+    gen_set_gpr(rd, dat);
+    tcg_gen_br(l2);
+
+    gen_set_label(l1);
+    /* Address comparion failure.  However, we still need to
+       provide the memory barrier implied by AQ/RL.  */
+    tcg_gen_mb(TCG_MO_ALL + aq * TCG_BAR_LDAQ + rl * TCG_BAR_STRL);
+    tcg_gen_movi_tl(dat, 1);
+    gen_set_gpr(rd, dat);
+
+    gen_set_label(l2);
+    tcg_temp_free(src1);
+    tcg_temp_free(src2);
+    tcg_temp_free(dat);
+
+}
+
 #define LOAD_ARGS \
     TCGv source1, source2; \
     source1 = tcg_temp_new(); \
@@ -437,7 +491,8 @@ static void gen_amo_minmax(DisasContext *ctx, TCGCond cond, uint32_t rd,
 #include "trans_insns/rv64M.inc.c"
 //RV32A
 #include "trans_insns/rv32A.inc.c"
-
+//RV64A
+#include "trans_insns/rv64A.inc.c"
 
 static void gen_arith(DisasContext *ctx, uint32_t opc, int rd, int rs1,
         int rs2)
