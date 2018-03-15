@@ -460,6 +460,19 @@ static void gen_scwd(DisasContext *ctx, uint32_t rd, uint32_t rs1, uint32_t rs2,
 
 }
 
+static void gen_set_rm(DisasContext *ctx, int rm)
+{
+    TCGv_i32 t0;
+
+    if (ctx->frm == rm) {
+        return;
+    }
+    ctx->frm = rm;
+    t0 = tcg_const_i32(rm);
+    gen_helper_set_rounding_mode(cpu_env, t0);
+    tcg_temp_free_i32(t0);
+}
+
 #define LOAD_ARGS \
     TCGv source1, source2; \
     source1 = tcg_temp_new(); \
@@ -493,6 +506,8 @@ static void gen_scwd(DisasContext *ctx, uint32_t rd, uint32_t rs1, uint32_t rs2,
 #include "trans_insns/rv32A.inc.c"
 //RV64A
 #include "trans_insns/rv64A.inc.c"
+//RV32F
+#include "trans_insns/rv32F.inc.c"
 
 static void gen_arith(DisasContext *ctx, uint32_t opc, int rd, int rs1,
         int rs2)
