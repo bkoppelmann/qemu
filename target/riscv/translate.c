@@ -512,6 +512,8 @@ static void gen_set_rm(DisasContext *ctx, int rm)
 #include "trans_insns/rv64F.inc.c"
 //RV32D
 #include "trans_insns/rv32D.inc.c"
+//RV64D
+#include "trans_insns/rv64D.inc.c"
 
 
 
