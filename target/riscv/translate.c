@@ -510,6 +510,9 @@ static void gen_set_rm(DisasContext *ctx, int rm)
 #include "trans_insns/rv32F.inc.c"
 //RV32F
 #include "trans_insns/rv64F.inc.c"
+//RV32D
+#include "trans_insns/rv32D.inc.c"
+
 
 
 static void gen_arith(DisasContext *ctx, uint32_t opc, int rd, int rs1,
