@@ -90,6 +90,24 @@ static bool trans_FSUBS(DisasContext *ctx, arg_FSUBS *a, uint32_t insn)
     return true;
 }
 
+static bool trans_FMULS(DisasContext *ctx, arg_FMULS *a, uint32_t insn)
+{
+    EXIT_FP_DISABLED(ctx);
+    gen_set_rm(ctx, a->rm);
+    gen_helper_fmul_s(cpu_fpr[a->rd], cpu_env, cpu_fpr[a->rs1],
+            cpu_fpr[a->rs2]);
+    return true;
+}
+
+static bool trans_FDIVS(DisasContext *ctx, arg_FDIVS *a, uint32_t insn)
+{
+    EXIT_FP_DISABLED(ctx);
+    gen_set_rm(ctx, a->rm);
+    gen_helper_fdiv_s(cpu_fpr[a->rd], cpu_env, cpu_fpr[a->rs1],
+            cpu_fpr[a->rs2]);
+    return true;
+}
+
 static bool trans_FSQRTS(DisasContext *ctx, arg_FSQRTS *a, uint32_t insn)
 {
     EXIT_FP_DISABLED(ctx);
