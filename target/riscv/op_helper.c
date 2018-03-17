@@ -69,10 +69,6 @@ void QEMU_NORETURN do_raise_exception_err(CPURISCVState *env,
 
 void helper_raise_exception(CPURISCVState *env, uint32_t exception)
 {
-#ifdef TARGET_RISCV64
-    printf("Exception PC%lx\n", env->pc);
-#endif
-    exit(1);
     do_raise_exception_err(env, exception, 0);
 }
 

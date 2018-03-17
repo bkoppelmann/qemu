@@ -15,7 +15,9 @@ static bool trans_AMOSWAPW(DisasContext *ctx, arg_AMOSWAPW *a, uint32_t insn)
 {
     LOAD_ARGS
     tcg_gen_atomic_xchg_tl(source2, source1, source2, ctx->mem_idx, MOP);
-    RESULT_AND_FREE
+    gen_set_gpr(a->rd, source2); 
+    tcg_temp_free(source1); 
+    tcg_temp_free(source2);
     return true;
 }
 
@@ -23,7 +25,9 @@ static bool trans_AMOADDW(DisasContext *ctx, arg_AMOADDW *a, uint32_t insn)
 {
     LOAD_ARGS
     tcg_gen_atomic_fetch_add_tl(source2, source1, source2, ctx->mem_idx, MOP);
-    RESULT_AND_FREE
+    gen_set_gpr(a->rd, source2); 
+    tcg_temp_free(source1); 
+    tcg_temp_free(source2);
     return true;
 }
 
@@ -31,7 +35,9 @@ static bool trans_AMOXORW(DisasContext *ctx, arg_AMOXORW *a, uint32_t insn)
 {
     LOAD_ARGS
     tcg_gen_atomic_fetch_xor_tl(source2, source1, source2, ctx->mem_idx, MOP);
-    RESULT_AND_FREE
+    gen_set_gpr(a->rd, source2); 
+    tcg_temp_free(source1); 
+    tcg_temp_free(source2);
     return true;
 }
 
@@ -39,7 +45,9 @@ static bool trans_AMOANDW(DisasContext *ctx, arg_AMOANDW *a, uint32_t insn)
 {
     LOAD_ARGS
     tcg_gen_atomic_fetch_and_tl(source2, source1, source2, ctx->mem_idx, MOP);
-    RESULT_AND_FREE
+    gen_set_gpr(a->rd, source2); 
+    tcg_temp_free(source1); 
+    tcg_temp_free(source2);
     return true;
 }
 
@@ -47,7 +55,9 @@ static bool trans_AMOORW(DisasContext *ctx, arg_AMOORW *a, uint32_t insn)
 {
     LOAD_ARGS
     tcg_gen_atomic_fetch_or_tl(source2, source1, source2, ctx->mem_idx, MOP);
-    RESULT_AND_FREE
+    gen_set_gpr(a->rd, source2); 
+    tcg_temp_free(source1); 
+    tcg_temp_free(source2);
     return true;
 }
 
