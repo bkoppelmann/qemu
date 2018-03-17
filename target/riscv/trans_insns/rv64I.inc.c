@@ -57,6 +57,7 @@ static bool trans_SLLIW(DisasContext *ctx, arg_SLLIW *a, uint32_t insn)
         return false;
     }
     tcg_gen_shli_tl(source1, source1, a->shamt);
+    tcg_gen_ext32s_tl(source1, source1);
     RESULT_AND_FREEI
     return true;
 #else
@@ -74,7 +75,7 @@ static bool trans_SRLIW(DisasContext *ctx, arg_SRLIW *a, uint32_t insn)
         gen_exception_illegal(ctx);
         return false;
     }
-    tcg_gen_shri_tl(source1, source1, a->shamt);
+    tcg_gen_extract_tl(source1, source1, a->shamt, 32 - a->shamt);
     RESULT_AND_FREEI
     return true;
 #else
@@ -92,7 +93,7 @@ static bool trans_SRAIW(DisasContext *ctx, arg_SRAIW *a, uint32_t insn)
         gen_exception_illegal(ctx);
         return false;
     }
-    tcg_gen_sari_tl(source1, source1, a->shamt);
+    tcg_gen_sextract_tl(source1, source1, a->shamt, 32 - a->shamt);
     RESULT_AND_FREEI
     return true;
 #else
@@ -106,6 +107,7 @@ static bool trans_ADDW(DisasContext *ctx, arg_ADDW *a, uint32_t insn)
 #if defined(TARGET_RISCV64)
     LOAD_ARGS
     tcg_gen_add_tl(source1, source1, source2);
+    tcg_gen_ext32s_tl(source1, source1);
     RESULT_AND_FREE
     return true;
 #else
@@ -120,6 +122,7 @@ static bool trans_SUBW(DisasContext *ctx, arg_SUBW *a, uint32_t insn)
 #if defined(TARGET_RISCV64)
     LOAD_ARGS
     tcg_gen_sub_tl(source1, source1, source2);
+    tcg_gen_ext32s_tl(source1, source1);
     RESULT_AND_FREE
     return true;
 #else
@@ -137,6 +140,7 @@ static bool trans_SLLW(DisasContext *ctx, arg_SLLW *a, uint32_t insn)
     tcg_gen_shl_tl(source1, source1, source2);
     tcg_gen_andi_tl(source2, source2, TARGET_LONG_BITS - 1);
     tcg_gen_shl_tl(source1, source1, source2);
+    tcg_gen_ext32s_tl(source1, source1);
     RESULT_AND_FREE
     return true;
 #else

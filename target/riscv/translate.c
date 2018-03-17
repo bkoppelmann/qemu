@@ -82,14 +82,14 @@ static const int tcg_memop_lookup[8] = {
 #define CASE_OP_32_64(X) case X
 #endif
 
-static uint32_t expand_imm_B(uint32_t val)
+static uint32_t expand_imm_BJ(uint32_t val)
 {
-    return -1;
+    return val << 1;
 }
 
-static uint32_t expand_imm_UJ(uint32_t val)
+static uint32_t expand_imm_U(uint32_t val)
 {
-    return -1;
+    return val << 12;
 }
 bool disas_rv32_64G(DisasContext *ctx, uint32_t insn);
 #include "decode-rv32_64g.inc.c"
@@ -195,19 +195,19 @@ static void gen_branch_cond(DisasContext *ctx, TCGCond cond,
     gen_get_gpr(source1, rs1);
     gen_get_gpr(source2, rs2);
 
-    tcg_gen_brcond_tl(TCG_COND_EQ, source1, source2, l);
+    tcg_gen_brcond_tl(cond, source1, source2, l);
 
     tcg_temp_free(source1);
     tcg_temp_free(source2);
 
     gen_goto_tb(ctx, 1, ctx->next_pc);
     gen_set_label(l); /* branch taken */
-    if ((ctx->pc + bimm) & 0x3) {
+    //if ((ctx->pc + bimm) & 0x3) {
         /* misaligned */
-        gen_exception_inst_addr_mis(ctx);
-    } else {
-        gen_goto_tb(ctx, 0, ctx->pc + bimm);
-    }
+        //gen_exception_inst_addr_mis(ctx);
+    //} else {
+    gen_goto_tb(ctx, 0, ctx->pc + bimm);
+    //}
     ctx->bstate = BS_BRANCH;
 }
 

@@ -9,7 +9,7 @@ static bool trans_LUI(DisasContext *ctx, arg_LUI *a, uint32_t insn)
 static bool trans_AUIPC(DisasContext *ctx, arg_AUIPC *a, uint32_t insn)
 {
     if (a->rd != 0) {
-        tcg_gen_movi_tl(cpu_gpr[a->rd], a->imm);
+        tcg_gen_movi_tl(cpu_gpr[a->rd], a->imm + ctx->pc);
     }
     return true;
 }
@@ -21,8 +21,8 @@ static bool trans_JAL(DisasContext *ctx, arg_JAL *a, uint32_t insn)
     next_pc = ctx->pc + a->imm;
     /* FIXME: If we reuse this for RVC, don't check for misaligned */
     if ((next_pc & 0x3) != 0) {
-        gen_exception_inst_addr_mis(ctx);
-        return true;
+        //gen_exception_inst_addr_mis(ctx);
+        //return true;
     }
     if (a->rd != 0) {
         tcg_gen_movi_tl(cpu_gpr[a->rd], ctx->next_pc);
@@ -31,6 +31,7 @@ static bool trans_JAL(DisasContext *ctx, arg_JAL *a, uint32_t insn)
     ctx->bstate = BS_BRANCH;
     return true;
 }
+
 static bool trans_JALR(DisasContext *ctx, arg_JALR *a, uint32_t insn)
 {
     /* no chaining with JALR */
@@ -44,7 +45,7 @@ static bool trans_JALR(DisasContext *ctx, arg_JALR *a, uint32_t insn)
     /* FIXME: If we reuse this for RVC, don't check for misaligned */
     misaligned = gen_new_label();
     tcg_gen_andi_tl(t0, cpu_pc, 0x2);
-    tcg_gen_brcondi_tl(TCG_COND_NE, t0, 0x0, misaligned);
+    //tcg_gen_brcondi_tl(TCG_COND_NE, t0, 0x0, misaligned);
 
     if (a->rd != 0) {
         tcg_gen_movi_tl(cpu_gpr[a->rd], ctx->next_pc);
