@@ -452,3 +452,38 @@ static bool trans_CSRRCI(DisasContext *ctx, arg_CSRRCI *a, uint32_t insn)
     return false;
 }
 
+static bool trans_URET(DisasContext *ctx, arg_URET *a, uint32_t insn)
+{
+    gen_exception_illegal(ctx);
+    return false;
+}
+
+static bool trans_SRET(DisasContext *ctx, arg_SRET *a, uint32_t insn)
+{
+    gen_helper_sret(cpu_pc, cpu_env, cpu_pc);
+    tcg_gen_exit_tb(0); /* no chaining */
+    ctx->bstate = BS_BRANCH;
+    return true;
+}
+
+static bool trans_MRET(DisasContext *ctx, arg_MRET *a, uint32_t insn)
+{
+    gen_helper_mret(cpu_pc, cpu_env, cpu_pc);
+    tcg_gen_exit_tb(0); /* no chaining */
+    ctx->bstate = BS_BRANCH;
+    return true;
+}
+
+static bool trans_WFI(DisasContext *ctx, arg_WFI *a, uint32_t insn)
+{
+    tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
+    gen_helper_wfi(cpu_env);
+    return true;
+}
+
+static bool trans_SFENCEVMA(DisasContext *ctx, arg_SFENCEVMA *a, uint32_t insn)
+{
+    gen_helper_tlb_flush(cpu_env);
+    return true;
+}
+
