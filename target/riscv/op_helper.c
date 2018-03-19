@@ -72,6 +72,13 @@ void helper_raise_exception(CPURISCVState *env, uint32_t exception)
     do_raise_exception_err(env, exception, 0);
 }
 
+void helper_raise_ld_state(CPURISCVState *env, uint64_t pc, uint32_t rs1)
+{
+#ifdef TARGET_RISCV64
+    qemu_log_mask(CPU_LOG_EXEC, "[%lx] LD rs1=%lx\n", pc, env->gpr[rs1]);
+#endif
+}
+
 static void validate_mstatus_fs(CPURISCVState *env, uintptr_t ra)
 {
 #ifndef CONFIG_USER_ONLY

@@ -1415,7 +1415,9 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx)
         }
     } else {
         ctx->next_pc = ctx->pc + 4;
-        disas_rv32_64G(ctx, ctx->opcode);
+        if (!disas_rv32_64G(ctx, ctx->opcode)) {
+            gen_exception_illegal(ctx);
+        }
     }
 }
 

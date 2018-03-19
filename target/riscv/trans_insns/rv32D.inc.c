@@ -97,6 +97,14 @@ static bool trans_FDIVD(DisasContext *ctx, arg_FDIVD *a, uint32_t insn)
     return true;
 }
 
+static bool trans_FSQRTD(DisasContext *ctx, arg_FSQRTD *a, uint32_t insn)
+{
+    EXIT_FP_DISABLED(ctx);
+    gen_set_rm(ctx, a->rm);
+    gen_helper_fsqrt_d(cpu_fpr[a->rd], cpu_env, cpu_fpr[a->rs1]);
+    return true;
+}
+
 static bool trans_FSGNJD(DisasContext *ctx, arg_FSGNJD *a, uint32_t insn)
 {
     EXIT_FP_DISABLED(ctx);
@@ -196,6 +204,16 @@ static bool trans_FLED(DisasContext *ctx, arg_FLED *a, uint32_t insn)
     EXIT_FP_DISABLED(ctx);
     TCGv t0 = tcg_temp_new();
     gen_helper_fle_d(t0, cpu_env, cpu_fpr[a->rs1], cpu_fpr[a->rs2]);
+    gen_set_gpr(a->rd, t0);
+    tcg_temp_free(t0);
+    return true;
+}
+
+static bool trans_FCLASSD(DisasContext *ctx, arg_FCLASSD *a, uint32_t insn)
+{
+    EXIT_FP_DISABLED(ctx);
+    TCGv t0 = tcg_temp_new();
+    gen_helper_fclass_d(t0, cpu_fpr[a->rs1]);
     gen_set_gpr(a->rd, t0);
     tcg_temp_free(t0);
     return true;

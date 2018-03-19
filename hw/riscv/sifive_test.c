@@ -40,6 +40,11 @@ static void sifive_test_write(void *opaque, hwaddr addr,
         case FINISHER_PASS:
             exit(0);
         default:
+            if (val64 >> 1) {
+                printf("Failed at %ld\n", val64 >> 1);
+                exit(val64 >> 1);
+            }
+            exit(0);
             break;
         }
     }

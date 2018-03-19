@@ -97,12 +97,19 @@ static bool trans_LB(DisasContext *ctx, arg_LB *a, uint32_t insn)
 }
 static bool trans_LH(DisasContext *ctx, arg_LH *a, uint32_t insn)
 {
-    gen_load2(ctx, MO_LESW, a->rd, a->rs1, a->imm);
+    gen_load2(ctx, MO_TESW, a->rd, a->rs1, a->imm);
     return true;
 }
 static bool trans_LW(DisasContext *ctx, arg_LW *a, uint32_t insn)
 {
-    gen_load2(ctx, MO_LESL, a->rd, a->rs1, a->imm);
+#ifdef TARGET_RISCV64
+    TCGv pc = tcg_const_i64(ctx->pc);
+    TCGv_i32 rs1 = tcg_const_i32(a->rs1);
+    gen_helper_raise_ld_state(cpu_env, pc, rs1);
+    tcg_temp_free_i32(rs1);
+    tcg_temp_free_i64(pc);
+#endif
+    gen_load2(ctx, MO_TESL, a->rd, a->rs1, a->imm);
     return true;
 }
 static bool trans_LBU(DisasContext *ctx, arg_LBU *a, uint32_t insn)
@@ -112,22 +119,22 @@ static bool trans_LBU(DisasContext *ctx, arg_LBU *a, uint32_t insn)
 }
 static bool trans_LHU(DisasContext *ctx, arg_LHU *a, uint32_t insn)
 {
-    gen_load2(ctx, MO_LEUW, a->rd, a->rs1, a->imm);
+    gen_load2(ctx, MO_TEUW, a->rd, a->rs1, a->imm);
     return true;
 }
 static bool trans_SB(DisasContext *ctx, arg_SB *a, uint32_t insn)
 {
-    gen_store2(ctx, MO_UB, a->rs1, a->rs2, a->imm);
+    gen_store2(ctx, MO_SB, a->rs1, a->rs2, a->imm);
     return true;
 }
 static bool trans_SH(DisasContext *ctx, arg_SH *a, uint32_t insn)
 {
-    gen_store2(ctx, MO_LEUW, a->rs1, a->rs2, a->imm);
+    gen_store2(ctx, MO_TESW, a->rs1, a->rs2, a->imm);
     return true;
 }
 static bool trans_SW(DisasContext *ctx, arg_SW *a, uint32_t insn)
 {
-    gen_store2(ctx, MO_LEUL, a->rs1, a->rs2, a->imm);
+    gen_store2(ctx, MO_TESL, a->rs1, a->rs2, a->imm);
     return true;
 }
 
@@ -177,7 +184,6 @@ static bool trans_SLLI(DisasContext *ctx, arg_SLLI *a, uint32_t insn)
 {
     LOAD_ARGSI
     if (a->shamt > TARGET_LONG_BITS) {
-        gen_exception_illegal(ctx);
         return false;
     }
     tcg_gen_shli_tl(source1, source1, a->shamt);
@@ -188,7 +194,6 @@ static bool trans_SRLI(DisasContext *ctx, arg_SRLI *a, uint32_t insn)
 {
     LOAD_ARGSI
     if (a->shamt > TARGET_LONG_BITS) {
-        gen_exception_illegal(ctx);
         return false;
     }
     tcg_gen_shri_tl(source1, source1, a->shamt);
@@ -199,7 +204,6 @@ static bool trans_SRAI(DisasContext *ctx, arg_SRAI *a, uint32_t insn)
 {
     LOAD_ARGSI
     if (a->shamt > TARGET_LONG_BITS) {
-        gen_exception_illegal(ctx);
         return false;
     }
     tcg_gen_sari_tl(source1, source1, a->shamt);
@@ -290,7 +294,7 @@ static bool trans_FENCEI(DisasContext *ctx, arg_FENCEI *a, uint32_t insn)
      * however we need to end the translation block */
     tcg_gen_movi_tl(cpu_pc, ctx->next_pc);
     tcg_gen_exit_tb(0);
-    return false;
+    return true;
 }
 static bool trans_ECALL(DisasContext *ctx, arg_ECALL *a, uint32_t insn)
 {
@@ -299,7 +303,7 @@ static bool trans_ECALL(DisasContext *ctx, arg_ECALL *a, uint32_t insn)
     generate_exception(ctx, RISCV_EXCP_U_ECALL);
     tcg_gen_exit_tb(0); /* no chaining */
     ctx->bstate = BS_BRANCH;
-    return false;
+    return true;
 }
 static bool trans_EBREAK(DisasContext *ctx, arg_EBREAK *a, uint32_t insn)
 {
@@ -307,7 +311,7 @@ static bool trans_EBREAK(DisasContext *ctx, arg_EBREAK *a, uint32_t insn)
     generate_exception(ctx, RISCV_EXCP_BREAKPOINT);
     tcg_gen_exit_tb(0); /* no chaining */
     ctx->bstate = BS_BRANCH;
-    return false;
+    return true;
 }
 
 static bool trans_CSRRW(DisasContext *ctx, arg_CSRRW *a, uint32_t insn)
@@ -330,8 +334,7 @@ static bool trans_CSRRW(DisasContext *ctx, arg_CSRRW *a, uint32_t insn)
     tcg_temp_free(source1);
     tcg_temp_free(csr_store);
     tcg_temp_free(dest);
-
-    return false;
+    return true;
 }
 static bool trans_CSRRS(DisasContext *ctx, arg_CSRRS *a, uint32_t insn)
 {
@@ -356,8 +359,7 @@ static bool trans_CSRRS(DisasContext *ctx, arg_CSRRS *a, uint32_t insn)
     tcg_temp_free(csr_store);
     tcg_temp_free(rs1_pass);
     tcg_temp_free(dest);
-
-    return false;
+    return true;
 }
 static bool trans_CSRRC(DisasContext *ctx, arg_CSRRC *a, uint32_t insn)
 {
@@ -382,8 +384,8 @@ static bool trans_CSRRC(DisasContext *ctx, arg_CSRRC *a, uint32_t insn)
     tcg_temp_free(csr_store);
     tcg_temp_free(rs1_pass);
     tcg_temp_free(dest);
+    return true;
 
-    return false;
 }
 static bool trans_CSRRWI(DisasContext *ctx, arg_CSRRWI *a, uint32_t insn)
 {
@@ -405,7 +407,7 @@ static bool trans_CSRRWI(DisasContext *ctx, arg_CSRRWI *a, uint32_t insn)
     tcg_temp_free(csr_store);
     tcg_temp_free(imm_rs1);
     tcg_temp_free(dest);
-    return false;
+    return true;
 }
 static bool trans_CSRRSI(DisasContext *ctx, arg_CSRRSI *a, uint32_t insn)
 {
@@ -427,7 +429,7 @@ static bool trans_CSRRSI(DisasContext *ctx, arg_CSRRSI *a, uint32_t insn)
     tcg_temp_free(csr_store);
     tcg_temp_free(imm_rs1);
     tcg_temp_free(dest);
-    return false;
+    return true;
 }
 static bool trans_CSRRCI(DisasContext *ctx, arg_CSRRCI *a, uint32_t insn)
 {
@@ -449,12 +451,11 @@ static bool trans_CSRRCI(DisasContext *ctx, arg_CSRRCI *a, uint32_t insn)
     tcg_temp_free(csr_store);
     tcg_temp_free(imm_rs1);
     tcg_temp_free(dest);
-    return false;
+    return true;
 }
 
 static bool trans_URET(DisasContext *ctx, arg_URET *a, uint32_t insn)
 {
-    gen_exception_illegal(ctx);
     return false;
 }
 
