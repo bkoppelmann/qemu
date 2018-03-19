@@ -7,15 +7,15 @@ import sys
 # else run the specific test
 
 bitslist = ['64']
-tests_dir = "/home/juander/coding/riscv/fpga/toolchain/riscv64-unknown-elf/share/riscv-tests/isa/"
+tests_dir = "/home/juander/coding/riscv/toolchain/RV64G-QEMU/riscv64-unknown-elf/share/riscv-tests/isa/"
 
 if len(sys.argv) == 1:
 
     failures = 0
     failed = []
     for bits in bitslist:
-        cmd = "../../build/riscv/riscv" + bits + "-softmmu/qemu-system-riscv" + bits + \
-                " -m 3840M -kernel " + tests_dir + "{} -nographic"
+        cmd = "../../build/riscv_orig/riscv" + bits + "-softmmu/qemu-system-riscv" + bits + \
+                " -M virt -m 3840M -kernel " + tests_dir + "{} -nographic"
         devnull = open(os.devnull, 'w')
 
         f = open('rv' + bits + '-tests-list', 'r')
@@ -41,7 +41,7 @@ if len(sys.argv) == 1:
 else:
     bits = '64'
     cmd = "../riscv" + bits + "-softmmu/qemu-system-riscv" + bits + \
-            " -m 3840M -kernel " + tests_dir + "{} -nographic"
+            " -M virt -m 3840M -kernel " + tests_dir + "{} -nographic"
     runcmd = cmd.format(sys.argv[1].strip())
     subprocess.call(runcmd, shell=True)
 
